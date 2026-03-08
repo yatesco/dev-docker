@@ -1,6 +1,7 @@
 [tools]
 rust = "1.93"
 gitleaks = "8.29.0"
+node = "lts"
 
 [settings]
 quiet = true
