@@ -1,5 +1,7 @@
 # About
 
+NOTE: this is developed on my personal home-lab and mirrored to <https://github.com/yatesco/dev-docker>.
+
 A single docker image useful for building various projects on CI.
 
 I find it annoying having to scrabble around for various docker images during CI and messing around with various tools, which all like their own configuration and ways of working.
