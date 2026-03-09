@@ -10,11 +10,77 @@ on:
   pull_request:
 
 jobs:
-  build:
+  validate-mise:
     runs-on: ubuntu-latest
     concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
+      group: ${{ github.workflow }}-${{ github.ref }}-validate
       cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install mise
+        uses: jdx/mise-action@v2
+
+      - name: Install tools
+        run: mise install
+
+  lint:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-lint
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install mise
+        uses: jdx/mise-action@v2
+
+      - name: Install tools
+        run: mise install
+
+      - name: Lint Dockerfile
+        run: mise run lint
+
+  build-test:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-build
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Docker image (test only)
+        uses: docker/build-push-action@v7
+        with:
+          push: false
+          load: true
+          tags: dev-docker-ci:verify
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify node in built image
+        run: >-
+          docker run --rm dev-docker-ci:verify node --version
+      - name: Verify node in built image
+        run: >-
+          docker run --rm dev-docker-ci:verify node --version
+      - name: Verify rust in built image
+        run: >-
+          docker run --rm dev-docker-ci:verify rustc --version
+      - name: Verify hadolint in built image
+        run: >-
+          docker run --rm dev-docker-ci:verify hadolint --version
+
+  push:
+    needs: [validate-mise, lint, build-test]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -42,8 +108,10 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           annotations: ${{ steps.meta.outputs.annotations }}
           provenance: true
           sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

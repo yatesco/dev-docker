@@ -1,15 +1,29 @@
 [tools]
 rust = "1.93"
-gitleaks = "8.29.0"
 node = "lts"
+hadolint = "latest"
 
 [settings]
 quiet = true
 
-[tasks.docker-build]
-description = "Build the Docker image"
-run = "docker build -t dev-docker-mise-rust ."
+[env]
+# local tag used for development and testing. It has nothing to do with the published image.
+LOCAL_DOCKER_TAG = "dev-docker-mise-rust"
 
-[tasks.docker-rebuild]
+[tasks."docker:build"]
+description = "Build the Docker image"
+run = "docker build -t $LOCAL_DOCKER_TAG ."
+
+[tasks."docker:rebuild"]
 description = "Rebuild the Docker image without cache"
-run = "docker build --no-cache -t dev-docker-mise-rust ."
+run = "docker build --no-cache -t $LOCAL_DOCKER_TAG ."
+
+[tasks."docker:shell"]
+description = "Build the Docker image and run an interactive shell"
+run = "docker run -it $LOCAL_DOCKER_TAG bash"
+depends = ["docker:build"]
+wait_for = ["docker:build"]
+
+[tasks.lint]
+description = "Lint Dockerfile with hadolint"
+run = "hadolint Dockerfile"
