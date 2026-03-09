@@ -1,6 +1,6 @@
 # hadolint global ignore=DL3059 # multiple RUN commands make things easier to debug
 # hadolint global ignore=DL3008 # yes, ok, we should lock them...but not yet
-FROM debian:stable-slim
+FROM debian:stable-slim@sha256:85dfcffff3c1e193877f143d05eaba8ae7f3f95cb0a32e0bc04a448077e1ac69
 
 # install mise (from https://mise.jdx.dev/mise-cookbook/docker.html)
 RUN apt-get update  \
