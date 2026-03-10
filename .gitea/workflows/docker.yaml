@@ -1,86 +1,50 @@
 name: Build and Push Docker Image
 
-# ideally we want this on PRs, but gitea actions show the PR number rather than the
-# branch name, so have it build on each commit to any branch, which elegantly shows
-# the branch name (which is typically the PR name anyway)
+# builds and verifies on every push; only adds stable/latest/date tags on main
 on:
+  # ideally we want this on PRs, but gitea actions show the PR number rather than the
+  # branch name, so have it build on each commit to any branch, which elegantly shows
+  # the branch name (which is typically the PR name anyway)
   push:
   workflow_dispatch:
 
 env:
-  MISE_VERBOSE: 1
   GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
   MISE_GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+  CI_IMAGE: ${{ vars.DOCKER_USERNAME }}/dev-docker
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  lint:
+  # ── Job 1: prepare ───────────────────────────────────────────────────────────
+  # Computes run metadata once so later jobs use the exact same tag values.
+  prepare:
     runs-on: ubuntu-latest
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-lint
-      cancel-in-progress: true
+    outputs:
+      gazelle_sha_tag: ${{ steps.meta.outputs.gazelle_sha_tag }}
+      date_tag: ${{ steps.meta.outputs.date_tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Set run metadata
+        id: meta
+        run: |
+          echo "gazelle_sha_tag=gazelle-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "date_tag=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
-      - name: Install mise
-        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
-
-      - name: Install tools
-        run: mise install
-
-      - name: Lint Dockerfile
-        run: mise run lint
-
-  build-test:
+  # ── Job 2: build ─────────────────────────────────────────────────────────────
+  # Builds the image and pushes it to Docker Hub tagged with the commit SHA.
+  # Using buildx push-only (no --load), so nothing is left in local Docker.
+  build:
+    needs: prepare
+    timeout-minutes: 30
     runs-on: ubuntu-latest
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-build
-      cancel-in-progress: true
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
-
-      - name: Build Docker image (test only)
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
-        with:
-          push: false
-          load: true
-          tags: dev-docker-ci:verify
-
-      - name: Verify node in built image
-        run: >-
-          docker run --rm dev-docker-ci:verify node --version
-      - name: Verify node in built image
-        run: >-
-          docker run --rm dev-docker-ci:verify node --version
-      - name: Verify rust in built image
-        run: >-
-          docker run --rm dev-docker-ci:verify rustc --version
-      - name: Verify hadolint in built image
-        run: >-
-          docker run --rm dev-docker-ci:verify hadolint --version
-
-  push:
-    needs: [lint, build-test]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Extract Docker image metadata
-        id: meta
-        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
-        with:
-          images: ${{ vars.DOCKER_USERNAME }}/dev-docker
-          tags: |
-            type=raw,value=stable
-            type=raw,value=latest
-            type=raw,value={{date 'YYYYMMDD'}}
-            type=sha,format=long
 
       - name: Log in to Docker Hub
         uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
@@ -88,14 +52,82 @@ jobs:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
-
-      - name: Build and push Docker image
+      - name: Build and push SHA-tagged image
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
         with:
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          annotations: ${{ steps.meta.outputs.annotations }}
-          provenance: true
-          sbom: true
+          tags: ${{ env.CI_IMAGE }}:${{ needs.prepare.outputs.gazelle_sha_tag }}
+
+  # ── Job 3: verify ────────────────────────────────────────────────────────────
+  # Runs directly inside the SHA-tagged image as a container job.
+  # The checkout action supplies the repo files; mise tasks handle all checks.
+  # MISE_YES=1 auto-trusts the workspace mise.toml (path differs from /app at build time).
+  verify:
+    needs: [prepare, build]
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.DOCKER_USERNAME }}/dev-docker:${{ needs.prepare.outputs.gazelle_sha_tag }}
+      credentials:
+        username: ${{ vars.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    env:
+      MISE_YES: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Verify node
+        run: node --version
+
+      - name: Verify rust
+        run: rustc --version
+
+      - name: Run lint tasks
+        run: mise run lint
+
+  # ── Job 4: tag ───────────────────────────────────────────────────────────────
+  # Pulls the verified SHA image and adds the stable/latest/date tags (main only).
+  tag:
+    needs: [prepare, verify]
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
+        with:
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Pull SHA-tagged image
+        run: docker pull "${{ env.CI_IMAGE }}:${{ needs.prepare.outputs.gazelle_sha_tag }}"
+
+      - name: Tag and push additional tags
+        run: |
+          set -euo pipefail
+          for tag in latest stable "${{ needs.prepare.outputs.date_tag }}"; do
+            docker tag "${{ env.CI_IMAGE }}:${{ needs.prepare.outputs.gazelle_sha_tag }}" "${{ env.CI_IMAGE }}:$tag"
+            docker push "${{ env.CI_IMAGE }}:$tag"
+            docker rmi "${{ env.CI_IMAGE }}:$tag" 2>/dev/null || true
+          done
+
+  # ── Job 5: cleanup_local ─────────────────────────────────────────────────────
+  # Runs last and removes the local SHA image copy from the runner host.
+  cleanup_local:
+    needs: [prepare, verify, tag]
+    if: always()
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove local SHA image copy
+        run: |
+          docker rmi "${{ env.CI_IMAGE }}:${{ needs.prepare.outputs.gazelle_sha_tag }}" 2>/dev/null || true
+
+      # these should have been removed after pushing in the previous step, but better safe than sorry
+      - name: Remove promoted local tags (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker rmi "${{ env.CI_IMAGE }}:latest" 2>/dev/null || true
+          docker rmi "${{ env.CI_IMAGE }}:stable" 2>/dev/null || true
+          docker rmi "${{ env.CI_IMAGE }}:${{ needs.prepare.outputs.date_tag }}" 2>/dev/null || true

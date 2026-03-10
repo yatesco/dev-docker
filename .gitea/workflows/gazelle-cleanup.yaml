@@ -1,0 +1,93 @@
+name: Cleanup Gazelle Docker Tags
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup_remote:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete remote gazelle tags
+        env:
+          DOCKER_USER: ${{ vars.DOCKER_USERNAME }}
+          DOCKER_PASS: ${{ secrets.DOCKER_PASSWORD }}
+          DOCKER_REPO: dev-docker
+          MIN_TAG_AGE_HOURS: "24"
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          user = os.environ["DOCKER_USER"]
+          password = os.environ["DOCKER_PASS"]
+          repo = os.environ["DOCKER_REPO"]
+          min_tag_age = timedelta(hours=int(os.environ["MIN_TAG_AGE_HOURS"]))
+          now = datetime.now(timezone.utc)
+
+          def parse_timestamp(value):
+              if not value:
+                  return None
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          def request_json(url, method="GET", payload=None, token=None):
+              headers = {}
+              data = None
+              if payload is not None:
+                  headers["Content-Type"] = "application/json"
+                  data = json.dumps(payload).encode("utf-8")
+              if token:
+                  headers["Authorization"] = f"JWT {token}"
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req) as resp:
+                  body = resp.read().decode("utf-8")
+                  return resp.getcode(), body
+
+          _, login_body = request_json(
+              "https://hub.docker.com/v2/users/login/",
+              method="POST",
+              payload={"username": user, "password": password},
+          )
+          token = json.loads(login_body).get("token")
+          if not token:
+              raise SystemExit("Failed to obtain Docker Hub API token")
+
+          tags_url = f"https://hub.docker.com/v2/repositories/{user}/{repo}/tags?page_size=100"
+          deleted = 0
+
+          while tags_url:
+              _, body = request_json(tags_url, token=token)
+              page = json.loads(body)
+              for item in page.get("results", []):
+                  tag_name = item.get("name", "")
+                  if not tag_name.startswith("gazelle-"):
+                      continue
+                  last_updated = parse_timestamp(item.get("last_updated"))
+                  if last_updated is None:
+                      continue
+                  if now - last_updated < min_tag_age:
+                      continue
+                  delete_url = f"https://hub.docker.com/v2/repositories/{user}/{repo}/tags/{tag_name}/"
+                  try:
+                      code, _ = request_json(delete_url, method="DELETE", token=token)
+                  except urllib.error.HTTPError as err:
+                      code = err.code
+
+                  if code not in (202, 204, 404):
+                      raise SystemExit(f"Failed deleting tag {tag_name}: HTTP {code}")
+                  deleted += 1
+
+              tags_url = page.get("next")
+
+          print(f"Deleted {deleted} remote tags starting with 'gazelle-'.")
+          PY

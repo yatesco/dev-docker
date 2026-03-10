@@ -2,6 +2,9 @@
 rust = "1.94.0"
 node = "lts"
 hadolint = "latest"
+"npm:markdownlint-cli" = "latest"
+"npm:prettier" = "latest"
+"npm:prettier-plugin-toml" = "latest"
 
 [settings]
 quiet = true
@@ -25,5 +28,13 @@ depends = ["docker:build"]
 wait_for = ["docker:build"]
 
 [tasks.lint]
+description = "Lint all files"
+depends = ["lint:dockerfile", "lint:markdown"]
+
+[tasks."lint:dockerfile"]
 description = "Lint Dockerfile with hadolint"
-run = "hadolint Dockerfile"
+run = ["mise install hadolint", "hadolint Dockerfile"]
+
+[tasks."lint:markdown"]
+description = "Lint Markdown with markdownlint"
+run = ["mise install npm:markdownlint-cli", "markdownlint \"**/*.md\""]
