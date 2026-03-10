@@ -8,6 +8,7 @@ on:
 env:
   MISE_VERBOSE: 1
   GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+  MISE_GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
 
 jobs:
   lint:
