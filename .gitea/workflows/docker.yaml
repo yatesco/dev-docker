@@ -1,8 +1,10 @@
 name: Build and Push Docker Image
 
+# ideally we want this on PRs, but gitea actions show the PR number rather than the
+# branch name, so have it build on each commit to any branch, which elegantly shows
+# the branch name (which is typically the PR name anyway)
 on:
   push:
-  pull_request:
   workflow_dispatch:
 
 env:
