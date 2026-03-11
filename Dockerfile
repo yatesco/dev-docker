@@ -35,6 +35,7 @@ RUN apt-get update \
     && apt-get -y --no-install-recommends install \
     bash git \
     ca-certificates \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 ENV MISE_DATA_DIR="/mise"
