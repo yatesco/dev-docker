@@ -7,6 +7,8 @@ on:
   # the branch name (which is typically the PR name anyway)
   push:
   workflow_dispatch:
+  schedule:
+    - cron: "30 22 * * 3" # Every Wednesday at 22:30 UTC
 
 env:
   GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
