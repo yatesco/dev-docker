@@ -1,0 +1,12 @@
+{
+    "name": "node-hello",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "build": "node src/index.js"
+    },
+    "dependencies": {
+        "chalk": "^4.1.2",
+        "dayjs": "^1.11.13"
+    }
+}

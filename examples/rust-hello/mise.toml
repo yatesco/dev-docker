@@ -1,0 +1,6 @@
+[tools]
+rust = "1.94.0"
+
+[tasks.build]
+description = "Build the Rust example"
+run = ["mise install", "cargo build --locked"]
