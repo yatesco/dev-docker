@@ -1,0 +1,6 @@
+[tools]
+node = "lts"
+
+[tasks.build]
+description = "Build the Node example"
+run = ["mise install", "npm ci", "npm run build"]
