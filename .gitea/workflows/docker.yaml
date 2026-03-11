@@ -1,6 +1,6 @@
 name: Build and Push Docker Image
 
-# builds and verifies on every push; only adds stable/latest/date tags on main
+# builds, lints, and verifies examples on every push; only adds stable/latest/date tags on main
 on:
   # ideally we want this on PRs, but gitea actions show the PR number rather than the
   # branch name, so have it build on each commit to any branch, which elegantly shows
@@ -60,11 +60,11 @@ jobs:
           push: true
           tags: ${{ env.CI_IMAGE }}:${{ needs.prepare.outputs.gazelle_sha_tag }}
 
-  # ── Job 3: verify ────────────────────────────────────────────────────────────
-  # Runs directly inside the SHA-tagged image as a container job.
-  # The checkout action supplies the repo files; mise tasks handle all checks.
+  # ── Job 3: lint ──────────────────────────────────────────────────────────────
+  # Runs lint tasks directly inside the SHA-tagged image as a container job.
+  # The checkout action supplies the repo files; mise handles the workspace checks.
   # MISE_YES=1 auto-trusts the workspace mise.toml (path differs from /app at build time).
-  verify:
+  lint:
     needs: [prepare, build]
     timeout-minutes: 20
     runs-on: ubuntu-latest
@@ -81,12 +81,6 @@ jobs:
 
       - name: Trust workspace mise config
         run: mise trust --yes "$GITHUB_WORKSPACE/mise.toml"
-
-      - name: Verify node
-        run: node --version
-
-      - name: Verify rust
-        run: rustc --version
 
       - name: Run lint tasks
         run: mise run lint
@@ -130,9 +124,9 @@ jobs:
         run: mise run build
 
   # ── Job 5: tag ───────────────────────────────────────────────────────────────
-  # Pulls the verified SHA image and adds the stable/latest/date tags (main only).
+  # Pulls the linted and example-verified SHA image and adds the stable/latest/date tags (main only).
   tag:
-    needs: [prepare, verify, verify_examples]
+    needs: [prepare, lint, verify_examples]
     if: github.ref == 'refs/heads/main'
     timeout-minutes: 20
     runs-on: ubuntu-latest
@@ -158,7 +152,7 @@ jobs:
   # ── Job 6: cleanup_local ─────────────────────────────────────────────────────
   # Runs last and removes the local SHA image copy from the runner host.
   cleanup_local:
-    needs: [prepare, verify, verify_examples, tag]
+    needs: [prepare, lint, verify_examples, tag]
     if: always()
     timeout-minutes: 10
     runs-on: ubuntu-latest
